@@ -268,6 +268,7 @@ void QuickStandardSystemButton::initialize()
     setAntialiasing(true);
     setSmooth(true);
     setClip(true);
+    setHoverEnabled(true);
 
     setImplicitWidth(kDefaultSystemButtonSize.width());
     setImplicitHeight(kDefaultSystemButtonSize.height());

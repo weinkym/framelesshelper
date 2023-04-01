@@ -40,6 +40,9 @@
 #include <QtCore/qtimer.h>
 #include <QtCore/qeventloop.h>
 #include <QtCore/qloggingcategory.h>
+#include <QtCore/qcoreapplication.h>
+#include <QtCore/qcoreevent.h>
+#include <QtGui/qevent.h>
 #include <QtGui/qwindow.h>
 #include <QtGui/qpalette.h>
 #include <QtWidgets/qwidget.h>
@@ -479,7 +482,7 @@ void FramelessWidgetsHelperPrivate::attach()
     params.isInsideSystemButtons = [this](const QPoint &pos, SystemButtonType *button) -> bool { return isInSystemButtons(pos, button); };
     params.isInsideTitleBarDraggableArea = [this](const QPoint &pos) -> bool { return isInTitleBarDraggableArea(pos); };
     params.getWindowDevicePixelRatio = [window]() -> qreal { return window->devicePixelRatioF(); };
-    params.setSystemButtonState = [this](const SystemButtonType button, const ButtonState state) -> void { setSystemButtonState(button, state); };
+    params.setSystemButtonState = [this](const SystemButtonType button, const ButtonState state, const QPoint &globalPos) -> void { setSystemButtonState(button, state, globalPos); };
     params.shouldIgnoreMouseEvents = [this](const QPoint &pos) -> bool { return shouldIgnoreMouseEvents(pos); };
     params.showSystemMenu = [this](const QPoint &pos) -> void { showSystemMenu(pos); };
     params.setProperty = [this](const QByteArray &name, const QVariant &value) -> void { setProperty(name, value); };
@@ -707,7 +710,7 @@ bool FramelessWidgetsHelperPrivate::shouldIgnoreMouseEvents(const QPoint &pos) c
     return ((Utils::windowStatesToWindowState(m_window->windowState()) == Qt::WindowNoState) && withinFrameBorder);
 }
 
-void FramelessWidgetsHelperPrivate::setSystemButtonState(const SystemButtonType button, const ButtonState state)
+void FramelessWidgetsHelperPrivate::setSystemButtonState(const SystemButtonType button, const ButtonState state, const QPoint &nativeGlobalPos)
 {
     Q_ASSERT(button != SystemButtonType::Unknown);
     if (button == SystemButtonType::Unknown) {
@@ -745,43 +748,79 @@ void FramelessWidgetsHelperPrivate::setSystemButtonState(const SystemButtonType 
         }
         break;
     }
-    if (widgetButton) {
-        const auto updateButtonState = [state](QWidget *btn) -> void {
-            Q_ASSERT(btn);
-            if (!btn) {
-                return;
-            }
-            switch (state) {
-            case ButtonState::Unspecified: {
-                QMetaObject::invokeMethod(btn, "setPressed", Q_ARG(bool, false));
-                QMetaObject::invokeMethod(btn, "setHovered", Q_ARG(bool, false));
-            } break;
-            case ButtonState::Hovered: {
-                QMetaObject::invokeMethod(btn, "setPressed", Q_ARG(bool, false));
-                QMetaObject::invokeMethod(btn, "setHovered", Q_ARG(bool, true));
-            } break;
-            case ButtonState::Pressed: {
-                QMetaObject::invokeMethod(btn, "setHovered", Q_ARG(bool, true));
-                QMetaObject::invokeMethod(btn, "setPressed", Q_ARG(bool, true));
-            } break;
-            case ButtonState::Clicked: {
-                // Clicked: pressed --> released, so behave like hovered.
-                QMetaObject::invokeMethod(btn, "setPressed", Q_ARG(bool, false));
-                QMetaObject::invokeMethod(btn, "setHovered", Q_ARG(bool, true));
-                // Trigger the clicked signal.
-                QMetaObject::invokeMethod(btn, "clicked");
-            } break;
-            }
-        };
-        if (const auto mo = widgetButton->metaObject()) {
-            const int pressedIndex = mo->indexOfSlot(QMetaObject::normalizedSignature("setPressed(bool)").constData());
-            const int hoveredIndex = mo->indexOfSlot(QMetaObject::normalizedSignature("setHovered(bool)").constData());
-            const int clickedIndex = mo->indexOfSignal(QMetaObject::normalizedSignature("clicked()").constData());
-            if ((pressedIndex >= 0) && (hoveredIndex >= 0) && (clickedIndex >= 0)) {
-                updateButtonState(widgetButton);
-            }
-        }
+    if (!widgetButton) {
+        return;
     }
+    const auto updateButtonState = [&nativeGlobalPos, state](QWidget *btn) -> void {
+        Q_ASSERT(btn);
+        if (!btn) {
+            return;
+        }
+        const QWidget * const btnWin = btn->window();
+        if (!btnWin) {
+            return;
+        }
+        const QWindow * const btnRawWin = btnWin->windowHandle();
+        if (!btnRawWin) {
+            return;
+        }
+        const QPoint qtGlobalPos = Utils::fromNativeGlobalPosition(btnRawWin, nativeGlobalPos);
+        const QPoint scenePos = btnWin->mapFromGlobal(qtGlobalPos);
+        const QPoint localPos = btn->mapFromGlobal(qtGlobalPos);
+        const auto sendEnterEvent = [&qtGlobalPos, &scenePos, &localPos, btn]() -> void {
+            QEnterEvent mouseEvent(localPos, scenePos, qtGlobalPos);
+            QCoreApplication::sendEvent(btn, &mouseEvent);
+            // We'd better send the mouse hover event at the same time, in case some widgets need it.
+            QHoverEvent hoverEvent(QEvent::HoverEnter, scenePos, qtGlobalPos, {});
+            QCoreApplication::sendEvent(btn, &hoverEvent);
+        };
+        const auto sendLeaveEvent = [&qtGlobalPos, &scenePos, btn]() -> void {
+            QEvent mouseEvent(QEvent::Leave);
+            QCoreApplication::sendEvent(btn, &mouseEvent);
+            // We'd better send the mouse hover event at the same time, in case some widgets need it.
+            QHoverEvent hoverEvent(QEvent::HoverLeave, scenePos, qtGlobalPos, {});
+            QCoreApplication::sendEvent(btn, &hoverEvent);
+        };
+        const auto sendPressEvent = [&qtGlobalPos, &scenePos, &localPos, btn]() -> void {
+            QMouseEvent event(QEvent::MouseButtonPress, localPos, scenePos, qtGlobalPos, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(btn, &event);
+        };
+        const auto sendReleaseEvent = [&qtGlobalPos, &scenePos, &localPos, btn]() -> void {
+            QMouseEvent event(QEvent::MouseButtonRelease, localPos, scenePos, qtGlobalPos, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(btn, &event);
+            QMetaObject::invokeMethod(btn, "clicked"); // Why do we need this ???
+        };
+        const auto sendMoveEvent = [&qtGlobalPos, &scenePos, &localPos, btn]() -> void {
+            // According to Qt docs, we should send both MouseMove event and HoverMove event.
+            QMouseEvent mouseEvent(QEvent::MouseMove, localPos, scenePos, qtGlobalPos, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(btn, &mouseEvent);
+            QHoverEvent hoverEvent(QEvent::HoverMove, scenePos, qtGlobalPos, {});
+            QCoreApplication::sendEvent(btn, &hoverEvent);
+        };
+        switch (state) {
+        case ButtonState::MouseEntered: {
+            sendEnterEvent();
+            // The visual state won't change without a mouse move event.
+            sendMoveEvent();
+        } break;
+        case ButtonState::MouseLeaved: {
+            // The visual state won't change without a mouse move event.
+            sendMoveEvent();
+            sendLeaveEvent();
+        } break;
+        case ButtonState::MouseMoving:
+            //sendMoveEvent();
+            sendEnterEvent();
+            break;
+        case ButtonState::MousePressed:
+            sendPressEvent();
+            break;
+        case ButtonState::MouseReleased:
+            sendReleaseEvent();
+            break;
+        }
+    };
+    updateButtonState(widgetButton);
 }
 
 void FramelessWidgetsHelperPrivate::moveWindowToDesktopCenter()
@@ -881,6 +920,8 @@ void FramelessWidgetsHelperPrivate::setSystemButton(QWidget *widget, const Syste
         data->closeButton = widget;
         break;
     }
+    widget->setMouseTracking(true);
+    widget->setAttribute(Qt::WA_Hover);
 }
 
 FramelessWidgetsHelper::FramelessWidgetsHelper(QObject *parent)

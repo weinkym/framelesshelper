@@ -127,7 +127,7 @@ static Q_LOGGING_CATEGORY(lcCoreGlobal, "wangwenx190.framelesshelper.core.global
 using namespace Global;
 
 #ifdef Q_OS_WINDOWS
-static_assert(std::size(WindowsVersions) == (static_cast<int>(WindowsVersion::Latest) + 1));
+static_assert(std::size(WindowsVersions) == (static_cast<quint8>(WindowsVersion::Latest) + 1));
 #endif
 
 #ifdef Q_OS_LINUX

@@ -333,6 +333,7 @@ void StandardSystemButtonPrivate::leaveEventHandler(QEvent *event)
     if (!event) {
         return;
     }
+    setPressed(false);
     setHovered(false);
     event->accept();
 }
@@ -395,6 +396,8 @@ void StandardSystemButtonPrivate::initialize()
     q->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     q->setFixedSize(kDefaultSystemButtonSize);
     q->setIconSize(kDefaultSystemButtonIconSize);
+    q->setMouseTracking(true);
+    q->setAttribute(Qt::WA_Hover);
     connect(q, &StandardSystemButton::pressed, this, [this](){ setPressed(true); });
     connect(q, &StandardSystemButton::released, this, [this](){ setPressed(false); });
 }

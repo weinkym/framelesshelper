@@ -158,39 +158,38 @@ Q_GLOBAL_STATIC(Win32Helper, g_win32Helper)
     // Hit-testing event should not be considered as a mouse event.
     const bool isMouseEvent = (((uMsg >= WM_MOUSEFIRST) && (uMsg <= WM_MOUSELAST)) ||
           ((uMsg >= WM_NCMOUSEMOVE) && (uMsg <= WM_NCXBUTTONDBLCLK)));
-    const auto releaseButtons = [&data](const std::optional<SystemButtonType> exclude) -> void {
-        static constexpr const auto defaultButtonState = ButtonState::Unspecified;
+    const auto resetButtons = [&data](const std::optional<SystemButtonType> exclude, const QPoint &globalPos) -> void {
         const SystemButtonType button = exclude.value_or(SystemButtonType::Unknown);
         if (button != SystemButtonType::WindowIcon) {
-            data.params.setSystemButtonState(SystemButtonType::WindowIcon, defaultButtonState);
+            data.params.setSystemButtonState(SystemButtonType::WindowIcon, ButtonState::MouseLeaved, globalPos);
         }
         if (button != SystemButtonType::Help) {
-            data.params.setSystemButtonState(SystemButtonType::Help, defaultButtonState);
+            data.params.setSystemButtonState(SystemButtonType::Help, ButtonState::MouseLeaved, globalPos);
         }
         if (button != SystemButtonType::Minimize) {
-            data.params.setSystemButtonState(SystemButtonType::Minimize, defaultButtonState);
+            data.params.setSystemButtonState(SystemButtonType::Minimize, ButtonState::MouseLeaved, globalPos);
         }
         if (button != SystemButtonType::Maximize) {
-            data.params.setSystemButtonState(SystemButtonType::Maximize, defaultButtonState);
+            data.params.setSystemButtonState(SystemButtonType::Maximize, ButtonState::MouseLeaved, globalPos);
         }
         if (button != SystemButtonType::Restore) {
-            data.params.setSystemButtonState(SystemButtonType::Restore, defaultButtonState);
+            data.params.setSystemButtonState(SystemButtonType::Restore, ButtonState::MouseLeaved, globalPos);
         }
         if (button != SystemButtonType::Close) {
-            data.params.setSystemButtonState(SystemButtonType::Close, defaultButtonState);
+            data.params.setSystemButtonState(SystemButtonType::Close, ButtonState::MouseLeaved, globalPos);
         }
     };
-    const auto hoverButton = [&releaseButtons, &data](const SystemButtonType button) -> void {
-        releaseButtons(button);
-        data.params.setSystemButtonState(button, ButtonState::Hovered);
+    const auto hoverButton = [&resetButtons, &data](const SystemButtonType button, const QPoint &globalPos) -> void {
+        resetButtons(button, globalPos);
+        data.params.setSystemButtonState(button, ButtonState::MouseMoving, globalPos);
     };
-    const auto pressButton = [&releaseButtons, &data](const SystemButtonType button) -> void {
-        releaseButtons(button);
-        data.params.setSystemButtonState(button, ButtonState::Pressed);
+    const auto pressButton = [&resetButtons, &data](const SystemButtonType button, const QPoint &globalPos) -> void {
+        resetButtons(button, globalPos);
+        data.params.setSystemButtonState(button, ButtonState::MousePressed, globalPos);
     };
-    const auto clickButton = [&releaseButtons, &data](const SystemButtonType button) -> void {
-        releaseButtons(button);
-        data.params.setSystemButtonState(button, ButtonState::Clicked);
+    const auto releaseButton = [&resetButtons, &data](const SystemButtonType button, const QPoint &globalPos) -> void {
+        resetButtons(button, globalPos);
+        data.params.setSystemButtonState(button, ButtonState::MouseReleased, globalPos);
     };
     switch (uMsg) {
     case WM_NCHITTEST: {
@@ -235,32 +234,33 @@ Q_GLOBAL_STATIC(Win32Helper, g_win32Helper)
         // it can update its visuals.
         // - If we're over a button, hover it.
         // - If we're over _anything else_, stop hovering the buttons.
+        const QPoint globalPos = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         switch (wParam) {
         case HTTOP:
         case HTCAPTION: {
-            releaseButtons(std::nullopt);
+            resetButtons(std::nullopt, globalPos);
             // Pass caption-related nonclient messages to the parent window.
             // Make sure to do this for the HTTOP, which is the top resize
             // border, so we can resize the window on the top.
             return SendMessageW(parentWindowHandle, uMsg, wParam, lParam);
         }
         case HTSYSMENU:
-            hoverButton(SystemButtonType::WindowIcon);
+            hoverButton(SystemButtonType::WindowIcon, globalPos);
             break;
         case HTHELP:
-            hoverButton(SystemButtonType::Help);
+            hoverButton(SystemButtonType::Help, globalPos);
             break;
         case HTREDUCE:
-            hoverButton(SystemButtonType::Minimize);
+            hoverButton(SystemButtonType::Minimize, globalPos);
             break;
         case HTZOOM:
-            hoverButton(SystemButtonType::Maximize);
+            hoverButton(SystemButtonType::Maximize, globalPos);
             break;
         case HTCLOSE:
-            hoverButton(SystemButtonType::Close);
+            hoverButton(SystemButtonType::Close, globalPos);
             break;
         default:
-            releaseButtons(std::nullopt);
+            resetButtons(std::nullopt, globalPos);
             break;
         }
         // If we haven't previously asked for mouse tracking, request mouse
@@ -291,7 +291,8 @@ Q_GLOBAL_STATIC(Win32Helper, g_win32Helper)
     case WM_NCMOUSELEAVE:
     case WM_MOUSELEAVE: {
         // When the mouse leaves the drag rect, make sure to dismiss any hover.
-        releaseButtons(std::nullopt);
+        const DWORD pos = GetMessagePos();
+        resetButtons(std::nullopt, {GET_X_LPARAM(pos), GET_Y_LPARAM(pos)});
         const QMutexLocker locker(&g_win32Helper()->mutex);
         g_win32Helper()->data[parentWindowId].trackingMouse = false;
     } break;
@@ -307,6 +308,7 @@ Q_GLOBAL_STATIC(Win32Helper, g_win32Helper)
         // If it's not in a caption button, then just forward the message along
         // to the root HWND. Make sure to do this for the HTTOP, which is the
         // top resize border.
+        const QPoint globalPos = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         switch (wParam) {
         case HTTOP:
         case HTCAPTION:
@@ -315,19 +317,19 @@ Q_GLOBAL_STATIC(Win32Helper, g_win32Helper)
         // The buttons won't work as you'd expect; we need to handle those
         // ourselves.
         case HTSYSMENU:
-            pressButton(SystemButtonType::WindowIcon);
+            pressButton(SystemButtonType::WindowIcon, globalPos);
             break;
         case HTHELP:
-            pressButton(SystemButtonType::Help);
+            pressButton(SystemButtonType::Help, globalPos);
             break;
         case HTREDUCE:
-            pressButton(SystemButtonType::Minimize);
+            pressButton(SystemButtonType::Minimize, globalPos);
             break;
         case HTZOOM:
-            pressButton(SystemButtonType::Maximize);
+            pressButton(SystemButtonType::Maximize, globalPos);
             break;
         case HTCLOSE:
-            pressButton(SystemButtonType::Close);
+            pressButton(SystemButtonType::Close, globalPos);
             break;
         default:
             break;
@@ -340,6 +342,7 @@ Q_GLOBAL_STATIC(Win32Helper, g_win32Helper)
         //
         // If it's not in a caption button, then just forward the message along
         // to the root HWND.
+        const QPoint globalPos = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         switch (wParam) {
         case HTTOP:
         case HTCAPTION:
@@ -347,19 +350,19 @@ Q_GLOBAL_STATIC(Win32Helper, g_win32Helper)
             return SendMessageW(parentWindowHandle, uMsg, wParam, lParam);
         // The buttons won't work as you'd expect; we need to handle those ourselves.
         case HTSYSMENU:
-            clickButton(SystemButtonType::WindowIcon);
+            releaseButton(SystemButtonType::WindowIcon, globalPos);
             break;
         case HTHELP:
-            clickButton(SystemButtonType::Help);
+            releaseButton(SystemButtonType::Help, globalPos);
             break;
         case HTREDUCE:
-            clickButton(SystemButtonType::Minimize);
+            releaseButton(SystemButtonType::Minimize, globalPos);
             break;
         case HTZOOM:
-            clickButton(SystemButtonType::Maximize);
+            releaseButton(SystemButtonType::Maximize, globalPos);
             break;
         case HTCLOSE:
-            clickButton(SystemButtonType::Close);
+            releaseButton(SystemButtonType::Close, globalPos);
             break;
         default:
             break;

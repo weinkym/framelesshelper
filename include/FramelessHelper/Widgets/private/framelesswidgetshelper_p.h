@@ -94,7 +94,7 @@ private:
     Q_NODISCARD bool isInSystemButtons(const QPoint &pos, Global::SystemButtonType *button) const;
     Q_NODISCARD bool isInTitleBarDraggableArea(const QPoint &pos) const;
     Q_NODISCARD bool shouldIgnoreMouseEvents(const QPoint &pos) const;
-    void setSystemButtonState(const Global::SystemButtonType button, const Global::ButtonState state);
+    void setSystemButtonState(const Global::SystemButtonType button, const Global::ButtonState state, const QPoint &globalPos);
     Q_NODISCARD QWidget *findTopLevelWindow() const;
     Q_NODISCARD WidgetsHelperData getWindowData() const;
     Q_NODISCARD WidgetsHelperData *getWindowDataMutable() const;

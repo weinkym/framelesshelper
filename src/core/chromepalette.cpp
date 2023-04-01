@@ -115,14 +115,14 @@ void ChromePalettePrivate::refresh()
     titleBarInactiveForegroundColor_sys = kDefaultDarkGrayColor;
     chromeButtonNormalColor_sys = kDefaultTransparentColor;
     chromeButtonHoverColor_sys =
-        Utils::calculateSystemButtonBackgroundColor(SystemButtonType::Minimize, ButtonState::Hovered);
+        Utils::calculateSystemButtonBackgroundColor(SystemButtonType::Minimize, ButtonState::MouseEntered);
     chromeButtonPressColor_sys =
-        Utils::calculateSystemButtonBackgroundColor(SystemButtonType::Minimize, ButtonState::Pressed);
+        Utils::calculateSystemButtonBackgroundColor(SystemButtonType::Minimize, ButtonState::MousePressed);
     closeButtonNormalColor_sys = kDefaultTransparentColor;
     closeButtonHoverColor_sys =
-        Utils::calculateSystemButtonBackgroundColor(SystemButtonType::Close, ButtonState::Hovered);
+        Utils::calculateSystemButtonBackgroundColor(SystemButtonType::Close, ButtonState::MouseEntered);
     closeButtonPressColor_sys =
-        Utils::calculateSystemButtonBackgroundColor(SystemButtonType::Close, ButtonState::Pressed);
+        Utils::calculateSystemButtonBackgroundColor(SystemButtonType::Close, ButtonState::MousePressed);
     Q_Q(ChromePalette);
     Q_EMIT q->titleBarActiveBackgroundColorChanged();
     Q_EMIT q->titleBarInactiveBackgroundColorChanged();

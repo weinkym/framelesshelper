@@ -37,6 +37,9 @@
 #include <QtCore/qtimer.h>
 #include <QtCore/qeventloop.h>
 #include <QtCore/qloggingcategory.h>
+#include <QtCore/qcoreevent.h>
+#include <QtCore/qcoreapplication.h>
+#include <QtGui/qevent.h>
 #ifndef FRAMELESSHELPER_QUICK_NO_PRIVATE
 #  if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
 #    include <QtGui/qpa/qplatformwindow.h> // For QWINDOWSIZE_MAX
@@ -44,8 +47,7 @@
 #    include <QtGui/private/qwindow_p.h> // For QWINDOWSIZE_MAX
 #  endif // (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
 #  include <QtQuick/private/qquickitem_p.h>
-#  include <QtQuickTemplates2/private/qquickabstractbutton_p.h>
-#  include <QtQuickTemplates2/private/qquickabstractbutton_p_p.h>
+#  include <QtQuickTemplates2/private/qquickcontrol_p.h>
 #endif // FRAMELESSHELPER_QUICK_NO_PRIVATE
 
 #ifndef QWINDOWSIZE_MAX
@@ -213,9 +215,9 @@ void FramelessQuickHelperPrivate::attach()
     };
     params.isInsideTitleBarDraggableArea = [this](const QPoint &pos) -> bool { return isInTitleBarDraggableArea(pos); };
     params.getWindowDevicePixelRatio = [window]() -> qreal { return window->effectiveDevicePixelRatio(); };
-    params.setSystemButtonState = [this](const SystemButtonType button, const ButtonState state) -> void {
+    params.setSystemButtonState = [this](const SystemButtonType button, const ButtonState state, const QPoint &globalPos) -> void {
         setSystemButtonState(FRAMELESSHELPER_ENUM_CORE_TO_QUICK(SystemButtonType, button),
-                             FRAMELESSHELPER_ENUM_CORE_TO_QUICK(ButtonState, state));
+                             FRAMELESSHELPER_ENUM_CORE_TO_QUICK(ButtonState, state), globalPos);
     };
     params.shouldIgnoreMouseEvents = [this](const QPoint &pos) -> bool { return shouldIgnoreMouseEvents(pos); };
     params.showSystemMenu = [this](const QPoint &pos) -> void { showSystemMenu(pos); };
@@ -296,6 +298,9 @@ void FramelessQuickHelperPrivate::setSystemButton(QQuickItem *item, const QuickG
     case QuickGlobal::SystemButtonType::Close:
         data->closeButton = item;
         break;
+    }
+    if (const auto control = qobject_cast<QQuickControl *>(item)) {
+        control->setHoverEnabled(true);
     }
 }
 
@@ -814,7 +819,8 @@ bool FramelessQuickHelperPrivate::shouldIgnoreMouseEvents(const QPoint &pos) con
 }
 
 void FramelessQuickHelperPrivate::setSystemButtonState(const QuickGlobal::SystemButtonType button,
-                                                       const QuickGlobal::ButtonState state)
+                                                       const QuickGlobal::ButtonState state,
+                                                       const QPoint &nativeGlobalPos)
 {
 #ifdef FRAMELESSHELPER_QUICK_NO_PRIVATE
     Q_UNUSED(button);
@@ -825,76 +831,102 @@ void FramelessQuickHelperPrivate::setSystemButtonState(const QuickGlobal::System
         return;
     }
     const QuickHelperData data = getWindowData();
-    QQuickAbstractButton *quickButton = nullptr;
+    QQuickItem *quickButton = nullptr;
     switch (button) {
     case QuickGlobal::SystemButtonType::Unknown:
         Q_UNREACHABLE_RETURN(void(0));
     case QuickGlobal::SystemButtonType::WindowIcon:
         if (data.windowIconButton) {
-            if (const auto btn = qobject_cast<QQuickAbstractButton *>(data.windowIconButton)) {
-                quickButton = btn;
-            }
+            quickButton = data.windowIconButton;
         }
         break;
     case QuickGlobal::SystemButtonType::Help:
         if (data.contextHelpButton) {
-            if (const auto btn = qobject_cast<QQuickAbstractButton *>(data.contextHelpButton)) {
-                quickButton = btn;
-            }
+            quickButton = data.contextHelpButton;
         }
         break;
     case QuickGlobal::SystemButtonType::Minimize:
         if (data.minimizeButton) {
-            if (const auto btn = qobject_cast<QQuickAbstractButton *>(data.minimizeButton)) {
-                quickButton = btn;
-            }
+            quickButton = data.minimizeButton;
         }
         break;
     case QuickGlobal::SystemButtonType::Maximize:
     case QuickGlobal::SystemButtonType::Restore:
         if (data.maximizeButton) {
-            if (const auto btn = qobject_cast<QQuickAbstractButton *>(data.maximizeButton)) {
-                quickButton = btn;
-            }
+            quickButton = data.maximizeButton;
         }
         break;
     case QuickGlobal::SystemButtonType::Close:
         if (data.closeButton) {
-            if (const auto btn = qobject_cast<QQuickAbstractButton *>(data.closeButton)) {
-                quickButton = btn;
-            }
+            quickButton = data.closeButton;
         }
         break;
     }
-    if (quickButton) {
-        const auto updateButtonState = [state](QQuickAbstractButton *btn) -> void {
-            Q_ASSERT(btn);
-            if (!btn) {
-                return;
-            }
-            switch (state) {
-            case QuickGlobal::ButtonState::Unspecified: {
-                btn->setPressed(false);
-                btn->setHovered(false);
-            } break;
-            case QuickGlobal::ButtonState::Hovered: {
-                btn->setPressed(false);
-                btn->setHovered(true);
-            } break;
-            case QuickGlobal::ButtonState::Pressed: {
-                btn->setHovered(true);
-                btn->setPressed(true);
-            } break;
-            case QuickGlobal::ButtonState::Clicked: {
-                // Clicked: pressed --> released, so behave like hovered.
-                btn->setPressed(false);
-                btn->setHovered(true);
-                QQuickAbstractButtonPrivate::get(btn)->click();
-            } break;
-            }
-        };
-        updateButtonState(quickButton);
+    if (!quickButton) {
+        return;
     }
+    const auto updateButtonState = [&nativeGlobalPos, state](QQuickItem *btn) -> void {
+        Q_ASSERT(btn);
+        if (!btn) {
+            return;
+        }
+        const QQuickWindow * const btnWin = btn->window();
+        if (!btnWin) {
+            return;
+        }
+        const QPoint qtGlobalPos = Utils::fromNativeGlobalPosition(btnWin, nativeGlobalPos);
+        const QPoint scenePos = btnWin->mapFromGlobal(qtGlobalPos);
+        const QPoint localPos = btn->mapFromGlobal(qtGlobalPos).toPoint();
+        const auto sendEnterEvent = [&qtGlobalPos, &scenePos, btn]() -> void {
+            // QEvent::Enter event is for QWidget only and will be ignored by QQuickItem,
+            // but after some experiments, I found QEvent::HoverEnter event can achieve similar effect.
+            QHoverEvent event(QEvent::HoverEnter, scenePos, qtGlobalPos, {});
+            QCoreApplication::sendEvent(btn, &event);
+        };
+        const auto sendLeaveEvent = [&qtGlobalPos, &scenePos, btn]() -> void {
+            // QEvent::Leave event is for QWidget only and will be ignored by QQuickItem,
+            // but after some experiments, I found QEvent::HoverLeave event can achieve similar effect.
+            QHoverEvent event(QEvent::HoverLeave, scenePos, qtGlobalPos, {});
+            QCoreApplication::sendEvent(btn, &event);
+        };
+        const auto sendPressEvent = [&qtGlobalPos, &scenePos, &localPos, btn]() -> void {
+            QMouseEvent event(QEvent::MouseButtonPress, localPos, scenePos, qtGlobalPos, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(btn, &event);
+        };
+        const auto sendReleaseEvent = [&qtGlobalPos, &scenePos, &localPos, btn]() -> void {
+            QMouseEvent event(QEvent::MouseButtonRelease, localPos, scenePos, qtGlobalPos, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(btn, &event);
+        };
+        const auto sendMoveEvent = [&qtGlobalPos, &scenePos, &localPos, btn]() -> void {
+            // According to Qt docs, we should send both MouseMove event and HoverMove event.
+            QMouseEvent mouseEvent(QEvent::MouseMove, localPos, scenePos, qtGlobalPos, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(btn, &mouseEvent);
+            QHoverEvent hoverEvent(QEvent::HoverMove, scenePos, qtGlobalPos, {});
+            QCoreApplication::sendEvent(btn, &hoverEvent);
+        };
+        switch (state) {
+        case QuickGlobal::ButtonState::MouseEntered: {
+            sendEnterEvent();
+            // The visual state won't change without a mouse move event.
+            sendMoveEvent();
+        } break;
+        case QuickGlobal::ButtonState::MouseLeaved: {
+            // The visual state won't change without a mouse move event.
+            sendMoveEvent();
+            sendLeaveEvent();
+        } break;
+        case QuickGlobal::ButtonState::MouseMoving:
+            sendMoveEvent();
+            break;
+        case QuickGlobal::ButtonState::MousePressed:
+            sendPressEvent();
+            break;
+        case QuickGlobal::ButtonState::MouseReleased:
+            sendReleaseEvent();
+            break;
+        }
+    };
+    updateButtonState(quickButton);
 #endif // FRAMELESSHELPER_QUICK_NO_PRIVATE
 }
 

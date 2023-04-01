@@ -93,7 +93,7 @@ private:
     Q_NODISCARD bool isInSystemButtons(const QPoint &pos, QuickGlobal::SystemButtonType *button) const;
     Q_NODISCARD bool isInTitleBarDraggableArea(const QPoint &pos) const;
     Q_NODISCARD bool shouldIgnoreMouseEvents(const QPoint &pos) const;
-    void setSystemButtonState(const QuickGlobal::SystemButtonType button, const QuickGlobal::ButtonState state);
+    void setSystemButtonState(const QuickGlobal::SystemButtonType button, const QuickGlobal::ButtonState state, const QPoint &globalPos);
     Q_NODISCARD QuickHelperData getWindowData() const;
     Q_NODISCARD QuickHelperData *getWindowDataMutable() const;
     void rebindWindow();

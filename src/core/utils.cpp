@@ -265,12 +265,12 @@ bool Utils::isThemeChangeEvent(const QEvent * const event)
 
 QColor Utils::calculateSystemButtonBackgroundColor(const SystemButtonType button, const ButtonState state)
 {
-    if (state == ButtonState::Unspecified) {
+    if (state == ButtonState::MouseLeaved) {
         return kDefaultTransparentColor;
     }
     const bool isClose = (button == SystemButtonType::Close);
     const bool isTitleColor = isTitleBarColorized();
-    const bool isHovered = (state == ButtonState::Hovered);
+    const bool isPressed = (state == ButtonState::MousePressed);
     const auto result = [isClose, isTitleColor]() -> QColor {
         if (isClose) {
             return kDefaultSystemCloseButtonBackgroundColor;
@@ -289,12 +289,12 @@ QColor Utils::calculateSystemButtonBackgroundColor(const SystemButtonType button
         return kDefaultSystemButtonBackgroundColor;
     }();
     if (isClose) {
-        return (isHovered ? result.lighter(110) : result.lighter(140));
+        return (isPressed ? result.lighter(140) : result.lighter(110));
     }
     if (!isTitleColor) {
-        return (isHovered ? result.lighter(110) : result);
+        return (isPressed ? result : result.lighter(110));
     }
-    return (isHovered ? result.lighter(150) : result.lighter(120));
+    return (isPressed ? result.lighter(120) : result.lighter(150));
 }
 
 bool Utils::shouldAppsUseDarkMode()
